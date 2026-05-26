@@ -37,7 +37,6 @@ import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 
-	"github.com/gruntwork-io/go-commons/files"
 	"github.com/gruntwork-io/terragrunt/internal/codegen"
 	"github.com/gruntwork-io/terragrunt/internal/engine"
 	"github.com/gruntwork-io/terragrunt/internal/errors"
@@ -254,6 +253,10 @@ func (cfg *TerragruntConfig) WriteTo(w io.Writer) (int64, error) {
 
 		if cfg.Terraform.UpdateSourceWithCAS != nil {
 			terraformBody.SetAttributeValue("update_source_with_cas", terraformAsCty.GetAttr("update_source_with_cas"))
+		}
+
+		if cfg.Terraform.Mutable != nil {
+			terraformBody.SetAttributeValue("mutable", terraformAsCty.GetAttr("mutable"))
 		}
 
 		// Handle extra_arguments blocks
@@ -860,6 +863,7 @@ func (conf *ErrorHook) String() string {
 type TerraformConfig struct {
 	Source              *string `hcl:"source,attr"`
 	UpdateSourceWithCAS *bool   `hcl:"update_source_with_cas,attr"`
+	Mutable             *bool   `hcl:"mutable,attr"`
 
 	// Ideally we can avoid the pointer to list slice, but if it is not a pointer, Terraform requires the attribute to
 	// be defined and we want to make this optional.
@@ -1049,7 +1053,7 @@ func adjustSourceWithMap(sourceMap map[string]string, source string, modulePath 
 // that exists within the path giving preference to `terragrunt.hcl`
 func GetDefaultConfigPath(workingDir string) string {
 	// check if a configuration file was passed as `workingDir`.
-	if !files.IsDir(workingDir) && files.FileExists(workingDir) {
+	if info, err := os.Stat(workingDir); err == nil && !info.IsDir() {
 		return workingDir
 	}
 
@@ -1060,7 +1064,7 @@ func GetDefaultConfigPath(workingDir string) string {
 			configPath = filepath.Join(workingDir, configPath)
 		}
 
-		if files.FileExists(configPath) {
+		if _, err := os.Stat(configPath); err == nil {
 			break
 		}
 	}
@@ -1232,7 +1236,7 @@ func ParseConfigFile(
 			var file *hclparse.File
 
 			if cacheConfig, found := hclCache.Get(childCtx, cacheKey); found {
-				file = cacheConfig
+				file = cacheConfig.Rebind(hclparse.NewParser(pctx.ParserOptions...))
 			} else {
 				// Parse the HCL file into an AST body that can be decoded multiple times later without having to re-parse
 				var parseErr error
@@ -2000,7 +2004,7 @@ func markLocalModuleSourceAsRead(pctx *ParsingContext, configPath, rawSource str
 			return nil
 		}
 
-		trackFileRead(pctx.FilesRead, path)
+		pctx.FilesRead.Add(path)
 
 		return nil
 	})

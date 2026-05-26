@@ -7,7 +7,6 @@ import vercel from "@astrojs/vercel";
 import node from "@astrojs/node";
 import partytown from "@astrojs/partytown";
 import tailwindcss from "@tailwindcss/vite";
-import react from "@astrojs/react";
 
 import starlightLinksValidator from "starlight-links-validator";
 import starlightLlmsTxt from "starlight-llms-txt";
@@ -34,8 +33,6 @@ export default defineConfig({
     })
     : node({ mode: "standalone" }),
   integrations: [
-    // We use React for the shadcn/ui components.
-    react(),
     starlight({
       title: "Terragrunt",
       description: "Terragrunt is a flexible orchestration tool that allows Infrastructure as Code written in OpenTofu/Terraform to scale.",
@@ -146,7 +143,16 @@ export default defineConfig({
         forward: ['dataLayer.push'],
       },
     }),
-    sitemap(),
+    sitemap({
+      // changefreq/priority intentionally omitted: the Docusaurus/Astro
+      // maintainers note these are ignored by Google's crawler, and Bing
+      // treats them as advisory at best.
+      //
+      // lastmod intentionally omitted: a global new Date() stamps every URL
+      // with build time, which Google heuristics discount as noise. Per-page
+      // accuracy would need git log (Vercel's default shallow clone makes this
+      // unreliable) or a populated `lastUpdated` frontmatter field.
+    }),
   ],
   markdown: {
     rehypePlugins: [rehypeChangelogAnchors],
@@ -157,6 +163,8 @@ export default defineConfig({
   // It's faster to have Vercel handle it anyways.
   redirects: {
     // Catch-all redirect from /docs/* to /*
+    // Note: this only fires at depth 0 under the Vercel adapter; deeper paths
+    // are handled by an equivalent rule in vercel.json. Kept here for `astro dev`.
     "/docs/[...slug]": "/[...slug]",
 
     // Root redirects

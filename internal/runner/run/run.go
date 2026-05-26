@@ -113,7 +113,11 @@ func Run(
 	terragruntOptionsClone.TerraformCommand = CommandNameTerragruntReadConfig
 
 	if err = terragruntOptionsClone.RunWithErrorHandling(ctx, l, r, func() error {
-		return ProcessHooks(ctx, l, cfg.Terraform.AfterHooks, terragruntOptionsClone, cfg, nil, r)
+		return ProcessHooks(ctx, l, OSVenv(), ProcessHooksParams{
+			Hooks: cfg.Terraform.AfterHooks,
+			Opts:  terragruntOptionsClone,
+			Cfg:   cfg,
+		})
 	}); err != nil {
 		return err
 	}
@@ -349,7 +353,14 @@ func RunActionWithHooks(
 ) error {
 	var allErrors *errors.MultiError
 
-	beforeHookErrors := ProcessHooks(ctx, l, cfg.Terraform.BeforeHooks, opts, cfg, allErrors, r)
+	v := OSVenv()
+
+	beforeHookErrors := ProcessHooks(ctx, l, v, ProcessHooksParams{
+		Hooks:              cfg.Terraform.BeforeHooks,
+		Opts:               opts,
+		Cfg:                cfg,
+		PreviousExecErrors: allErrors,
+	})
 	allErrors = allErrors.Append(beforeHookErrors)
 
 	var actionErrors error
@@ -360,8 +371,13 @@ func RunActionWithHooks(
 		l.Errorf("Errors encountered running before_hooks. Not running '%s'.", description)
 	}
 
-	postHookErrors := ProcessHooks(ctx, l, cfg.Terraform.AfterHooks, opts, cfg, allErrors, r)
-	errorHookErrors := processErrorHooks(ctx, l, cfg.Terraform.ErrorHooks, opts, allErrors)
+	postHookErrors := ProcessHooks(ctx, l, v, ProcessHooksParams{
+		Hooks:              cfg.Terraform.AfterHooks,
+		Opts:               opts,
+		Cfg:                cfg,
+		PreviousExecErrors: allErrors,
+	})
+	errorHookErrors := ProcessErrorHooks(ctx, l, v.Exec, cfg.Terraform.ErrorHooks, opts, allErrors)
 	allErrors = allErrors.Append(postHookErrors, errorHookErrors)
 
 	return allErrors.ErrorOrNil()
@@ -481,11 +497,6 @@ func modulesNeedInit(opts *Options) (bool, error) {
 	modulesPath := filepath.Join(opts.DataDir(), "modules")
 	if util.FileExists(modulesPath) {
 		return false, nil
-	}
-
-	moduleNeedInit := filepath.Join(opts.WorkingDir, ModuleInitRequiredFile)
-	if util.FileExists(moduleNeedInit) {
-		return true, nil
 	}
 
 	// Check for module definitions in .tf and .tofu files using WalkDir
@@ -659,6 +670,12 @@ func PrepareNonInitCommand(
 func needsInitRunCfg(ctx context.Context, l log.Logger, opts *Options, cfg *runcfg.RunConfig) (bool, error) {
 	if slices.Contains(TerraformCommandsThatDoNotNeedInit, opts.TerraformCliArgs.First()) {
 		return false, nil
+	}
+
+	// Marker check lives here, not in modulesNeedInit, so a populated .terraform/modules/
+	// can't short-circuit past it. Refs: #1921, #6058.
+	if util.FileExists(filepath.Join(opts.WorkingDir, ModuleInitRequiredFile)) {
+		return true, nil
 	}
 
 	if providersNeedInit(opts) {

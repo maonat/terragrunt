@@ -23,13 +23,6 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func createLogger() log.Logger {
-	formatter := format.NewFormatter(format.NewKeyValueFormatPlaceholders())
-	formatter.SetDisabledColors(true)
-
-	return log.New(log.WithLevel(log.DebugLevel), log.WithFormatter(formatter))
-}
-
 func TestParseTerragruntConfigRemoteStateMinimalConfig(t *testing.T) {
 	t.Parallel()
 
@@ -1731,6 +1724,7 @@ locals {
 terraform {
 	source = "git::git@github.com:org/repo.git//modules/test?ref=v0.1.0"
 	update_source_with_cas = true
+	mutable = true
 
 	extra_arguments "secrets" {
 		commands = ["plan", "apply"]
@@ -1897,6 +1891,7 @@ inputs = {
 	assert.Equal(t, terragruntConfig.Locals, rereadConfig.Locals)
 	assert.Equal(t, terragruntConfig.Terraform.Source, rereadConfig.Terraform.Source)
 	assert.Equal(t, terragruntConfig.Terraform.UpdateSourceWithCAS, rereadConfig.Terraform.UpdateSourceWithCAS)
+	assert.Equal(t, terragruntConfig.Terraform.Mutable, rereadConfig.Terraform.Mutable)
 	assert.Equal(t, terragruntConfig.Terraform.ExtraArgs, rereadConfig.Terraform.ExtraArgs)
 	assert.Equal(t, terragruntConfig.Terraform.BeforeHooks, rereadConfig.Terraform.BeforeHooks)
 	assert.Equal(t, terragruntConfig.Terraform.AfterHooks, rereadConfig.Terraform.AfterHooks)
@@ -1959,4 +1954,61 @@ inputs = {
 	assert.Equal(t, terragruntConfig.IamAssumeRoleDuration, rereadConfig.IamAssumeRoleDuration)
 	assert.Equal(t, terragruntConfig.IamAssumeRoleSessionName, rereadConfig.IamAssumeRoleSessionName)
 	assert.Equal(t, terragruntConfig.Inputs, rereadConfig.Inputs)
+}
+
+func TestWriteToExcludeNoRun(t *testing.T) {
+	t.Parallel()
+
+	src := `
+exclude {
+  if      = true
+  actions = ["apply"]
+  no_run  = true
+}
+`
+
+	ctx, pctx := newTestParsingContext(t, "test-exclude-no-run")
+	cfg, err := config.ParseConfigString(ctx, pctx, createLogger(), config.DefaultTerragruntConfigPath, src, nil)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Exclude)
+	require.NotNil(t, cfg.Exclude.NoRun)
+
+	var buf bytes.Buffer
+
+	_, writeErr := cfg.WriteTo(&buf)
+	require.NoError(t, writeErr)
+	assert.Contains(t, buf.String(), "no_run")
+}
+
+func TestWriteToCatalogFields(t *testing.T) {
+	t.Parallel()
+
+	noShell := true
+	noHooks := true
+
+	cfg := &config.TerragruntConfig{
+		Catalog: &config.CatalogConfig{
+			URLs:            []string{"github.com/example/modules"},
+			DefaultTemplate: "github.com/example/template",
+			NoShell:         &noShell,
+			NoHooks:         &noHooks,
+		},
+	}
+
+	var buf bytes.Buffer
+
+	_, writeErr := cfg.WriteTo(&buf)
+	require.NoError(t, writeErr)
+
+	rendered := buf.String()
+	assert.Contains(t, rendered, "default_template")
+	assert.Contains(t, rendered, "no_shell")
+	assert.Contains(t, rendered, "no_hooks")
+}
+
+func createLogger() log.Logger {
+	formatter := format.NewFormatter(format.NewKeyValueFormatPlaceholders())
+	formatter.SetDisabledColors(true)
+
+	return log.New(log.WithLevel(log.DebugLevel), log.WithFormatter(formatter))
 }
